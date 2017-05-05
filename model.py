@@ -38,8 +38,6 @@ for image, measurement in zip(images, measurements):
     aug_images.append(cv2.flip(image, 1))
     aug_measurements.append(measurement * -1.0)
 
-print(len(aug_images))
-
 X_train = np.array(aug_images)
 y_train = np.array(aug_measurements)
 
@@ -63,13 +61,31 @@ model.add(Dense(50))
 model.add(Dense(10))
 model.add(Dense(1))
 
+# # # End Model # # #
+
+batch_size = 10
+
+def generator(X_train, y_train, batch_size):
+    X_batch = np.zeroes((batch_size, 160, 320, 3))
+    y_batch = np.zeroes((batch_size, 1))
+
+    while True:
+        for i in range(batch_size):
+            index = random.choice(len(features), 1)
+            X_batch[i] = X_train[index]
+            y_batch[i] = y_train[index]
+        yield X_batch, y_batch
+
 model.compile(loss="mse",
               optimizer="adam")
-model.fit(X_train, y_train,
+'''model.fit(X_train, y_train,
           validation_split=0.2,
           shuffle=True,
-          nb_epoch=5)
+          nb_epoch=5)'''
 
-# # # End Model # # #
+train_generator = generator(X_train, y_train, batch_size)
+model.fit_generator(train_generator,
+                    samples_per_epoch=100,
+                    nb_epoch=10)
 
 model.save("model.h5")
