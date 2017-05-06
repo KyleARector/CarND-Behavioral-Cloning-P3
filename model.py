@@ -1,62 +1,63 @@
 import csv
 import cv2
 import numpy as np
+import sklearn
+from sklearn.utils import shuffle
+from sklearn.model_selection import train_test_split
 from keras.models import Sequential, Model
 from keras.layers import Flatten, Dense, Lambda, Cropping2D, Dropout
 from keras.layers.convolutional import Convolution2D
 from keras.layers.pooling import MaxPooling2D
-from sklearn.utils import shuffle
-from sklearn.model_selection import train_test_split
 
-batch_size = 64
-num_epochs = 10
+batch_size = 32
+num_epochs = 2
+outer_cam_offset = 0.25
+
+camera_angle_aug = [0, outer_cam_offset, -outer_cam_offset]
 
 # Read in lines of training data and image locations from CSV
+# Multiple training sets?
 lines = []
 with open("Training_Data/driving_log.csv") as in_file:
     reader = csv.reader(in_file)
     for line in reader:
         lines.append(line)
 
-training_set, valid_set = train_test_split(shuffle(lines),
-                                           test_size=0.2)
+# Split validation set and training set from total number of data points
+train_samples, validation_samples = train_test_split(lines, test_size=0.2)
 
 
-def generator(lines, batch_size):
+# Define generator to release data in batches
+# Default batch size of 32
+def generator(lines, batch_size=32):
+    num_samples = len(lines)
     while True:
         shuffle(lines)
         for offset in range(0, num_samples, batch_size):
-            line_items = lines[offset: offset + batch_size]
+            batch_samples = lines[offset:offset + batch_size]
 
-            images, measurements = [], []
-
-            for line in line_items:
+            images = []
+            angles = []
+            for batch_sample in batch_samples:
                 for i in range(3):
-                    data_path = line[i]
-                    filename = data_path.split('/')[-1]
-                    curr_path = "Training_Data/IMG/" + filename
-                    image = cv2.imread(curr_path)
+                    name = "Training_Data/IMG/"+batch_sample[i].split('/')[-1]
+                    image = cv2.imread(name)
+                    angle = float(batch_sample[3])
                     images.append(image)
-                    if i == 1:
-                        measurements.append(float(line[4]) + 0.2)
-                    elif i == 2:
-                        measurements.append(float(line[4]) - 0.2)
-                    else:
-                        measurements.append(float(line[4]))
+                    angles.append(angle + camera_angle_aug[i])
+                    # Append flipped images as well
+                    images.append(cv2.flip(image, 1))
+                    angles.append(-(angle + camera_angle_aug[i]))
 
-            # Double the training set by flipping each image and measurement
-            aug_images, aug_measurements = [], []
-            for image, measurement in zip(images, measurements):
-                aug_images.append(image)
-                aug_measurements.append(measurement)
-                aug_images.append(cv2.flip(image, 1))
-                aug_measurements.append(measurement * -1.0)
+            # trim image to only see section with road
+            X_train = np.array(images)
+            y_train = np.array(angles)
+            yield shuffle(X_train, y_train)
 
-            X_train = np.array(aug_images[:batch_size])
-            y_train = np.array(aug_measurements[:batch_size])
 
-            yield X_train, y_train
-
+# Instantiate generators for the training and validation sets
+train_generator = generator(train_samples, batch_size=batch_size)
+validation_generator = generator(validation_samples, batch_size=batch_size)
 
 # # # Begin Model # # #
 model = Sequential()
@@ -77,23 +78,13 @@ model.add(Dense(100))
 model.add(Dense(50))
 model.add(Dense(10))
 model.add(Dense(1))
-
 # # # End Model # # #
-model.compile(loss="mse",
-              optimizer="adam")
-''' model.fit(X_train, y_train,
-          validation_split=0.2,
-          shuffle=True,
-          nb_epoch=5)'''
 
-training_generator = generator(training_set,
-                               batch_size=batch_size)
-valid_generator = generator(valid_set,
-                            batch_size=batch_size)
+model.compile(loss='mse', optimizer='adam')
 model.fit_generator(train_generator,
-                    steps_per_epoch=len(training_set)/batch_size,
-                    validation_data=valid_generator,
-                    validation_steps=len(valid_set)/batch_size,
+                    samples_per_epoch=len(train_samples),
+                    validation_data=validation_generator,
+                    nb_val_samples=len(validation_samples),
                     nb_epoch=num_epochs)
 
 model.save("model.h5")
